@@ -1189,7 +1189,7 @@ void drawAPinfo(String &filename, JsonObject &cfgobj, tagRecord *&taginfo, imgPa
     initSprite(spr, imageParams.width, imageParams.height, imageParams);
     const JsonArray jsonArray = loc.as<JsonArray>();
     for (const JsonVariant &elem : jsonArray) {
-        drawElement(elem, spr, imageParams, screenCurrentOrientation);
+        drawElement(elem, spr, imageParams, screenCurrentOrientation, taginfo);
     }
 
     spr2buffer(spr, filename, imageParams);
@@ -1385,8 +1385,9 @@ void drawJsonStream(Stream &stream, String &filename, tagRecord *&taginfo, imgPa
 TFT_eSprite spr = TFT_eSprite(&tft);
     initSprite(spr, imageParams.width, imageParams.height, imageParams);
     uint8_t screenCurrentOrientation = 0;
-    //spr.setRotation(2);
-    //imageParams.rotatebuffer = imageParams.rotatebuffer + 1;
+
+    //const uint8_t mac[8] = ;
+
     DynamicJsonDocument doc(500);
     if (stream.find("[")) {
         do {
@@ -1395,7 +1396,7 @@ TFT_eSprite spr = TFT_eSprite(&tft);
                 wsErr("json error " + String(error.c_str()));
                 break;
             } else {
-                drawElement(doc.as<JsonObject>(), spr, imageParams, screenCurrentOrientation);
+                drawElement(doc.as<JsonObject>(), spr, imageParams, screenCurrentOrientation, taginfo);
                 doc.clear();
             }
         } while (stream.findUntil(",", "]"));
@@ -1442,7 +1443,7 @@ void rotateBuffer(uint8_t rotation, uint8_t &currentOrientation, TFT_eSprite &sp
     }
 }
 
-void drawElement(const JsonObject &element, TFT_eSprite &spr, imgParam &imageParams, uint8_t &currentOrientation) {
+void drawElement(const JsonObject &element, TFT_eSprite &spr, imgParam &imageParams, uint8_t &currentOrientation, tagRecord *&taginfo) {
     if (element.containsKey("text")) {
         const JsonArray &textArray = element["text"];
         const uint16_t align = textArray[5] | 0;
@@ -1468,6 +1469,26 @@ void drawElement(const JsonObject &element, TFT_eSprite &spr, imgParam &imagePar
     } else if (element.containsKey("rotate")) {
         uint8_t rotation = element["rotate"].as<int>();
         rotateBuffer(rotation, currentOrientation, spr, imageParams);
+    } else if (element.containsKey("ledFlash")) {
+        struct ledFlash flashData = {0};
+        const JsonArray &ledArray = element["LED"];
+        flashData.mode = 1;
+        flashData.flashDuration = ledArray[0].as<int>();
+        flashData.color1 = ledArray[1].as<int>();
+        flashData.color2 = ledArray[2].as<int>();
+        flashData.color3 = ledArray[3].as<int>();
+        flashData.flashCount1 = ledArray[4].as<int>();
+        flashData.flashCount2 = ledArray[5].as<int>();
+        flashData.flashCount3 = ledArray[6].as<int>();
+        flashData.delay1 = ledArray[7].as<int>();
+        flashData.delay2 = ledArray[8].as<int>();
+        flashData.delay3 = ledArray[9].as<int>();
+        flashData.flashSpeed1 = ledArray[10].as<int>();
+        flashData.flashSpeed2 = ledArray[11].as<int>();
+        flashData.flashSpeed3 = ledArray[12].as<int>();
+        flashData.repeats = ledArray[13].as<int>();;
+        const uint8_t *payload = reinterpret_cast<const uint8_t *>(&flashData);
+        sendTagCommand(taginfo->mac, CMD_DO_LEDFLASH, !taginfo->isExternal, payload);
     }
 }
 

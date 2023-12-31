@@ -36,7 +36,7 @@ extern bool getJsonTemplateFileExtractVariables(String &filename, String jsonfil
 int getJsonTemplateUrl(String &filename, String URL, time_t fetched, String MAC, tagRecord *&taginfo, imgParam &imageParams);
 void drawJsonStream(Stream &stream, String &filename, tagRecord *&taginfo, imgParam &imageParams);
 void rotateBuffer(uint8_t rotation, uint8_t &currentOrientation, TFT_eSprite &spr, imgParam &imageParams);
-void drawElement(const JsonObject &element, TFT_eSprite &spr,  imgParam &imageParams, uint8_t &currentOrientation);
+void drawElement(const JsonObject &element, TFT_eSprite &spr,  imgParam &imageParams, uint8_t &currentOrientation, tagRecord *&taginfo);
 uint16_t getColor(const String &color);
 char *formatHttpDate(const time_t t);
 String urlEncode(const char *msg);
