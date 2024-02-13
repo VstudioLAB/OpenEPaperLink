@@ -18,6 +18,7 @@ class unissd : public epdInterface {
    void setWindowX(uint16_t start, uint16_t end);
    void setWindowY(uint16_t start, uint16_t end);
    void setPosXY(uint16_t x, uint16_t y);
+   void cpyHalf(uint8_t*, uint8_t*, u_int, u_int);
 };
 
 #endif
