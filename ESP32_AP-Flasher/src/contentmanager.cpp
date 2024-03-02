@@ -2025,7 +2025,7 @@ int getJsonTemplateUrl(String &filename, String URL, time_t fetched, String MAC,
     http.addHeader("If-Modified-Since", formatHttpDate(fetched));
     http.addHeader("X-ESL-MAC", MAC);
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    http.setTimeout(5000);
+    http.setTimeout(15000);
     const int httpCode = http.GET();
     if (httpCode == 200) {
         drawJsonStream(http.getStream(), filename, taginfo, imageParams);
