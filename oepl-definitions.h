@@ -55,6 +55,8 @@
 #define SOLUM_M3_BW_29 0x40
 #define SOLUM_M3_BWR_58 0x41
 #define SOLUM_M3_BW_58 0x42
+#define SOLUM_M3_PEGHOOK_BWR_13 0x43
+
 
 // Hanshow Nebular types
 #define HS_NEBULAR_BWY_35 0x60
@@ -73,6 +75,7 @@
 #define GICI_BLE_TFT_BWR_42 0xB7
 #define GICI_BLE_EPD_BW_74 0xB8
 #define GICI_BLE_EPD_BWR_74 0xB9
+#define GICI_BLE_EPD_BWR_29_SILABS 0xBD
 #define GICI_BLE_UNKNOWN 0xBF
 #define ATC_MI_THERMOMETER 0xBE
 
@@ -81,6 +84,7 @@
 #define STYPE_SIZE_022 0x41
 #define STYPE_SIZE_026 0x43
 #define STYPE_SIZE_029 0x42
+#define STYPE_SIZE_029_BW 0x4E
 #define STYPE_SIZE_029_FREEZER 0x22
 #define STYPE_SIZE_042 0x46
 #define STYPE_SIZE_043 0x47
@@ -89,6 +93,9 @@
 #define STYPE_SIZE_060 0x48
 #define STYPE_SIZE_075 0x4C
 #define STYPE_SIZE_097 0x64
+#define STYPE_SIZE_013 0x4D
+
+
 
 
 // Capability flags
@@ -107,7 +114,7 @@
 #define DATATYPE_IMG_DIFF 0x10             // always 1BPP ** deprecated
 #define DATATYPE_IMG_RAW_1BPP 0x20         // 2888 bytes for 1.54"  / 4736 2.9" / 15000 4.2"
 #define DATATYPE_IMG_RAW_2BPP 0x21         // 5776 bytes for 1.54"  / 9472 2.9" / 30000 4.2"
-#define DATATYPE_IMG_ZLIB 0x30             // compressed format. 
+#define DATATYPE_IMG_ZLIB 0x30             // compressed format.
                                                     // [uint32_t uncompressed size][2 byte zlib header][zlib compressed image]
                                                     // image format: [uint8_t header length][uint16_t width][uint16_t height][uint8_t bpp (lower 4)][img data]
 
@@ -150,7 +157,7 @@
 #define EPD_LUT_FAST 3
 #define EPD_LUT_OTA 0x10
 
-// these are the 'custom image' arguments that will be sent in addition to their 'type'. 
+// these are the 'custom image' arguments that will be sent in addition to their 'type'.
 #define CUSTOM_IMAGE_NOCUSTOM 0x00         // regular image type
 #define CUSTOM_IMAGE_SPLASHSCREEN 0x01     // will show at first boot/powerup
 #define CUSTOM_IMAGE_LOST_CONNECTION 0x02  // this image will be shown (if it exists on the tag) if the tag looses its connection
