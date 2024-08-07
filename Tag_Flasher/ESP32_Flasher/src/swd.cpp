@@ -182,6 +182,7 @@ bool nrfswd::init() {
             isLocked = true;
         }
     } else {
+        if (showDebug) Serial0.printf("No nRF core ID found, got 0x%lx\n", temp);
         isConnected = false;
         isLocked = true;
     }
@@ -265,6 +266,20 @@ void nrfswd::write_register(uint32_t address, uint32_t value) {
     bool state3 = DP_Read(DP_RDBUFF, temp);
     if (showDebug)
         Serial0.printf("%i%i%i Write Register: 0x%08x : 0x%08x\r\n", state1, state2, state3, address, value);
+}
+
+uint8_t nrfswd::nrf_erase_all() {
+    nrf_port_selection(1);
+    nrf_write_port(1, AP_NRF_ERASEALL, 1);
+    long timeout = millis();
+    while (nrf_read_port(1, AP_NRF_ERASEALLSTATUS)) {
+        if (millis() - timeout > 1000) return 1;
+    }
+    nrf_write_port(1, AP_NRF_ERASEALL, 0);
+    nrf_port_selection(0);
+    nrf_soft_reset();
+    init();
+    return 0;
 }
 
 uint8_t nrfswd::erase_all_flash() {

@@ -18,7 +18,7 @@ class swd {
     bool DP_Write(unsigned addr, uint32_t data);
     bool DP_Read(unsigned addr, uint32_t &data);
 
-    uint32_t idCode;
+    uint32_t idCode = 0;
 
    protected:
     void swd_Begin();
@@ -56,6 +56,7 @@ class nrfswd : protected swd {
 
     uint8_t nrf_read_bank(uint32_t address, uint32_t buffer[], int size);
     uint8_t nrf_write_bank(uint32_t address, uint32_t buffer[], int size);
+    uint8_t nrf_erase_all();
     uint8_t erase_all_flash();
     uint8_t erase_uicr();
     uint8_t erase_page(uint32_t page);

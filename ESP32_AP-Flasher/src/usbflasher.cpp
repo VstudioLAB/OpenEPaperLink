@@ -20,6 +20,7 @@ USBCDC USBSerial;
 #include "web.h"
 #include "webflasher.h"
 #include "zbs_interface.h"
+#include "cc_interface.h"
 
 QueueHandle_t flasherCmdQueue;
 
@@ -52,43 +53,43 @@ bool autoFlash(flasher* f) {
 
     if (f->findTagByMD5()) {
         // this tag currently contains original firmware, found its fingerprint
-        cmdSerial.printf("Found original firmware tag, recognized its fingerprint (%s)\n", f->md5char);
+        cmdSerial.printf("Found original firmware tag, recognized its fingerprint (%s)\r\n", f->md5char);
         f->readInfoBlock();
         f->getFirmwareMac();
         f->prepareInfoBlock();
         f->writeInfoBlock();
-        cmdSerial.printf("Attempting to perform a flash...\n");
+        cmdSerial.printf("Attempting to perform a flash...\r\n");
         if (f->writeFlashFromPack("/Tag_FW_Pack.bin", f->tagtype)) {
-            cmdSerial.printf("Successfully flashed the tag!\n");
+            cmdSerial.printf("Successfully flashed the tag!\r\n");
             return true;
         } else {
-            cmdSerial.printf("Couldn't flash the tag, for some reason...\n");
+            cmdSerial.printf("Couldn't flash the tag, for some reason...\r\n");
         }
     } else if (f->getInfoBlockMD5()) {
         // did find an infoblock MD5 that looks valid
         if (f->findTagByMD5()) {
             // did find the md5 in the database
-            cmdSerial.printf("Found an already-flashed tag, recognized its fingerprint (%s)\n", f->md5char);
+            cmdSerial.printf("Found an already-flashed tag, recognized its fingerprint (%s)\r\n", f->md5char);
             f->getInfoBlockMac();
             f->getInfoBlockType();
             f->readInfoBlock();
-            cmdSerial.printf("Attempting to perform a flash...\n");
+            cmdSerial.printf("Attempting to perform a flash...\r\n");
             if (f->writeFlashFromPack("/Tag_FW_Pack.bin", f->tagtype)) {
-                cmdSerial.printf("Successfully flashed the tag!\n");
+                cmdSerial.printf("Successfully flashed the tag!\r\n");
                 return true;
             } else {
-                cmdSerial.printf("Couldn't flash the tag, for some reason...\n");
+                cmdSerial.printf("Couldn't flash the tag, for some reason...\r\n");
             }
         } else {
             // couldn't find the md5 from the infoblock
-            cmdSerial.printf("Found an already-flashed tag, but we couldn't find its fingerprint (%s) in the database\n", f->md5char);
+            cmdSerial.printf("Found an already-flashed tag, but we couldn't find its fingerprint (%s) in the database\r\n", f->md5char);
             return false;
         }
     } else {
         // We couldn't recognize the tag from it's fingerprint...
-        cmdSerial.printf("Found a tag but didn't recognize its fingerprint\n", f->md5char);
+        cmdSerial.printf("Found a tag but didn't recognize its fingerprint\r\n", f->md5char);
         f->backupFlash();
-        cmdSerial.printf("Saved this MD5 binary to filesystem\n");
+        cmdSerial.printf("Saved this MD5 binary to filesystem\r\n");
     }
     return false;
 }
@@ -245,7 +246,7 @@ static void usbEventCallback(void* arg, esp_event_base_t event_base, int32_t eve
                 resetFlasherState();
                 break;
             case ARDUINO_USB_SUSPEND_EVENT:
-                Serial.printf("USB SUSPENDED: remote_wakeup_en: %u\n", data->suspend.remote_wakeup_en);
+                Serial.printf("USB SUSPENDED: remote_wakeup_en: %u\r\n", data->suspend.remote_wakeup_en);
                 break;
             case ARDUINO_USB_RESUME_EVENT:
                 Serial.println("USB RESUMED");
@@ -310,6 +311,7 @@ typedef enum {
 
     CMD_SELECT_ZBS243 = 60,
     CMD_SELECT_NRF82511 = 61,
+    CMD_SELECT_CC = 62,
 
     CMD_SELECT_PORT = 70,
 
@@ -323,15 +325,17 @@ typedef enum {
     CMD_WRITE_ERROR = 99,
 
 } ZBS_UART_PROTO;
-uint32_t FLASHER_VERSION = 0x00000031;
+uint32_t FLASHER_VERSION = 0x00000032;
 
 #define CONTROLLER_ZBS243 0
 #define CONTROLLER_NRF82511 1
+#define CONTROLLER_CC      2
 uint8_t selectedController = 0;
 uint8_t selectedFlasherPort;
 uint32_t currentFlasherOffset;
 flasher* zbsflasherp = nullptr;
 nrfswd* nrfflasherp = nullptr;
+CC_interface *ccflasherp = nullptr;
 
 void processFlasherCommand(struct flasherCommand* cmd, uint8_t transportType) {
     uint8_t* tempbuffer;
@@ -400,6 +404,9 @@ void processFlasherCommand(struct flasherCommand* cmd, uint8_t transportType) {
             } else if (selectedController == CONTROLLER_ZBS243) {
                 if (zbsflasherp == nullptr) return;
                 zbsflasherp->zbs->erase_flash();
+            } else if (selectedController == CONTROLLER_CC) {
+               if (ccflasherp == nullptr) return;
+                ccflasherp->erase_chip();
             }
             sendFlasherAnswer(CMD_ERASE_FLASH, NULL, 0, transportType);
             break;
@@ -416,7 +423,7 @@ void processFlasherCommand(struct flasherCommand* cmd, uint8_t transportType) {
         case CMD_SELECT_PORT:
             wsSerial("> select port");
             selectedFlasherPort = cmd->data[0];
-            Serial.printf("Port selected = %d\n", cmd->data[0]);
+            Serial.printf("Port selected = %d\r\n", cmd->data[0]);
             break;
         case CMD_SELECT_ZBS243:
             wsSerial("> connect zbs");
@@ -451,6 +458,14 @@ void processFlasherCommand(struct flasherCommand* cmd, uint8_t transportType) {
             currentFlasherOffset = 0;
             selectedController = CONTROLLER_NRF82511;
             break;
+       case CMD_SELECT_CC:
+            ccflasherp = new CC_interface;
+            ccflasherp->begin(FLASHER_EXT_CLK,FLASHER_EXT_MISO,FLASHER_EXT_RESET);
+            temp_buff[0] = 1;
+            sendFlasherAnswer(CMD_SELECT_CC, temp_buff, 1,transportType);
+            currentFlasherOffset = 0;
+            selectedController = CONTROLLER_CC;
+            break;
         case CMD_READ_FLASH:
             wsSerial("> read flash");
             uint8_t* bufferp;
@@ -480,6 +495,19 @@ void processFlasherCommand(struct flasherCommand* cmd, uint8_t transportType) {
                     currentFlasherOffset += cur_len;
                     sendFlasherAnswer(CMD_READ_FLASH, bufferp, cur_len, transportType);
                     if (bufferp != nullptr) free(bufferp);
+                }
+            } else if (selectedController == CONTROLLER_CC) {
+                if (ccflasherp == nullptr) return;
+                if (currentFlasherOffset >= 32768) {
+                    sendFlasherAnswer(CMD_COMPLETE, temp_buff, 1,transportType);
+                } else {
+                   bufferp = (uint8_t*)malloc(1024);
+                   if (bufferp == nullptr) return;
+                   cur_len = (32768 - currentFlasherOffset >= 1024) ? 1024 : 32768 - currentFlasherOffset;
+                   ccflasherp->read_code_memory(currentFlasherOffset,cur_len,bufferp);
+                   currentFlasherOffset += cur_len;
+                   sendFlasherAnswer(CMD_READ_FLASH, bufferp, cur_len,transportType);
+                   free(bufferp);
                 }
             }
             break;
@@ -526,14 +554,14 @@ void processFlasherCommand(struct flasherCommand* cmd, uint8_t transportType) {
                         // very ugly and naive way to find out what page we're in, and erase all relevant pages before writing
                         if (c % nrfflasherp->nrf_info.codepage_size == 0) {
                             nrfflasherp->erase_page(c);
-                            Serial.printf("Erasing page %lu\n", c);
+                            Serial.printf("Erasing page %lu\r\n", c);
                             c += nrfflasherp->nrf_info.codepage_size;
                         } else {
                             c++;
                         }
                     }
                     uint8_t result = nrfflasherp->nrf_write_bank(currentFlasherOffset, (uint32_t*)cmd->data, cmd->len);
-                    Serial.printf("wrote page offset %lu to nrf\n", currentFlasherOffset);
+                    Serial.printf("wrote page offset %lu to nrf\r\n", currentFlasherOffset);
                     currentFlasherOffset += cmd->len;
                     if (result == 3) {
                         sendFlasherAnswer(CMD_WRITE_ERROR, NULL, 0, transportType);
@@ -550,6 +578,15 @@ void processFlasherCommand(struct flasherCommand* cmd, uint8_t transportType) {
                     currentFlasherOffset += cmd->len;
                     sendFlasherAnswer(CMD_WRITE_FLASH, NULL, 0, transportType);
                 }
+            } else if (selectedController == CONTROLLER_CC) {
+               if (currentFlasherOffset >= 32768) {
+                  sendFlasherAnswer(CMD_COMPLETE, temp_buff, 1, transportType);
+               } else {
+                  if (ccflasherp == nullptr) return;
+                   ccflasherp->write_code_memory(currentFlasherOffset, cmd->data, cmd->len);
+                   currentFlasherOffset += cmd->len;
+                   sendFlasherAnswer(CMD_WRITE_FLASH, NULL, 0, transportType);
+               }
             }
             break;
         case CMD_WRITE_INFOPAGE:
@@ -560,7 +597,7 @@ void processFlasherCommand(struct flasherCommand* cmd, uint8_t transportType) {
                     sendFlasherAnswer(CMD_COMPLETE, temp_buff, 1, transportType);
                 } else {
                     uint8_t result =  nrfflasherp->nrf_write_bank(0x10001000 + currentFlasherOffset, (uint32_t*)cmd->data, cmd->len);
-                    Serial.printf("wrote infopage to nrf\n");
+                    Serial.printf("wrote infopage to nrf\r\n");
                     currentFlasherOffset += cmd->len;
                     if (result == 3) {
                         sendFlasherAnswer(CMD_WRITE_ERROR, NULL, 0, transportType);
@@ -603,6 +640,10 @@ void processFlasherCommand(struct flasherCommand* cmd, uint8_t transportType) {
                 cmdSerial.println("Not yet implemented!");
             }
             break;
+
+       default:
+          cmdSerial.printf("Ignored flasher command 0x%x.\r\n",cmd->command);
+          break;
     }
 }
 
@@ -618,6 +659,10 @@ void flasherCommandTimeout() {
         delete nrfflasherp;
         nrfflasherp = nullptr;
     }
+    if (ccflasherp != nullptr) {
+        delete ccflasherp;
+        ccflasherp = nullptr;
+    }
     lastCmdTimeStamp = 0;
 }
 
@@ -631,7 +676,7 @@ void tagDebugPassthrough() {
         Serial2.readBytes(buf, len);
         cmdSerial.printf("%d bytes: ", len);
         cmdSerial.write(buf, len);
-        cmdSerial.print("\n");
+        cmdSerial.print("\r\n");
         //String dataString((char*)buf, len);
         //wsSerial(dataString, "cyan");
         //  accumulatedData += dataString;

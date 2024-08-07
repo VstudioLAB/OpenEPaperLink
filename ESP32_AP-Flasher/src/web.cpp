@@ -119,7 +119,7 @@ void wsSendSysteminfo() {
           ApChanString += "disabled";
        }
        else {
-          ApChanString += "Ch " + String(apInfo.SubGhzChannel);
+          ApChanString += String(apInfo.SubGhzChannel);
        }
     }
     setVarDB("ap_ch", ApChanString);
@@ -478,7 +478,7 @@ void init_web() {
     server.on("/led_flash", HTTP_GET, [](AsyncWebServerRequest *request) {
         //  color picker: https://roger-random.github.io/RGB332_color_wheel_three.js/
         //  http GET to /led_flash?mac=000000000000&pattern=000000000000000000000000
-        //  see https://github.com/jjwbruijn/OpenEPaperLink/wiki/Led-control
+        //  see https://github.com/OpenEPaperLink/OpenEPaperLink/wiki/Led-control
         if (request->hasParam("mac")) {
             String dst = request->getParam("mac")->value();
             uint8_t mac[8];
@@ -629,7 +629,7 @@ void init_web() {
         if (request->hasParam("key", true) && request->hasParam("val", true)) {
             std::string key = request->getParam("key", true)->value().c_str();
             String val = request->getParam("val", true)->value();
-            Serial.printf("set key %s value %s\n", key.c_str(), val);
+            Serial.printf("set key %s value %s\r\n", key.c_str(), val);
             setVarDB(key, val);
             request->send(200, "text/plain", "Ok, saved");
         } else {
@@ -647,7 +647,7 @@ void init_web() {
             for (JsonPair kv : jsonDocument.as<JsonObject>()) {
                 std::string key = kv.key().c_str();
                 String val = kv.value().as<String>();
-                Serial.printf("set key %s value %s\n", key.c_str(), val);
+                Serial.printf("set key %s value %s\r\n", key.c_str(), val);
                 setVarDB(key, val);
             }
             request->send(200, "text/plain", "JSON uploaded and processed");

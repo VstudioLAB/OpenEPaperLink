@@ -331,10 +331,13 @@ void initAPconfig() {
     config.sleepTime1 = APconfig.containsKey("sleeptime1") ? APconfig["sleeptime1"] : 0;
     config.sleepTime2 = APconfig.containsKey("sleeptime2") ? APconfig["sleeptime2"] : 0;
     config.ble = APconfig.containsKey("ble") ? APconfig["ble"] : 0;
+    #ifdef BLE_ONLY
+    config.ble = true;
+    #endif
     // default wifi power 8.5 dbM
     // see https://github.com/espressif/arduino-esp32/blob/master/libraries/WiFi/src/WiFiGeneric.h#L111
     config.wifiPower = APconfig.containsKey("wifipower") ? APconfig["wifipower"] : 34;
-    config.repo = APconfig.containsKey("repo") ? APconfig["repo"].as<String>() : String("jjwbruijn/OpenEPaperLink");
+    config.repo = APconfig.containsKey("repo") ? APconfig["repo"].as<String>() : String("OpenEPaperLink/OpenEPaperLink");
     config.env = APconfig.containsKey("env") ? APconfig["env"].as<String>() : String(STR(BUILD_ENV_NAME));
     if (APconfig["timezone"]) {
         strlcpy(config.timeZone, APconfig["timezone"], sizeof(config.timeZone));
@@ -376,7 +379,7 @@ HwType getHwType(const uint8_t id) {
     } else {
         char filename[20];
         snprintf(filename, sizeof(filename), "/tagtypes/%02X.json", id);
-        Serial.printf("read %s\n", filename);
+        Serial.printf("read %s\r\n", filename);
         File jsonFile = contentFS->open(filename, "r");
 
         if (jsonFile) {

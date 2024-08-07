@@ -64,7 +64,7 @@ void contentRunner() {
         }
 
         if (taginfo->expectedNextCheckin > now - 10 && taginfo->expectedNextCheckin < now + 30 && taginfo->pendingIdle == 0 && taginfo->pendingCount == 0) {
-            int16_t minutesUntilNextUpdate = (taginfo->nextupdate - now) / 60;
+            int32_t minutesUntilNextUpdate = (taginfo->nextupdate - now) / 60;
             if (minutesUntilNextUpdate > config.maxsleep) {
                 minutesUntilNextUpdate = config.maxsleep;
             }
@@ -855,7 +855,7 @@ void drawWeather(String &filename, JsonObject &cfgobj, const tagRecord *taginfo,
     const String tz = cfgobj["#tz"];
     String units = "";
     if (cfgobj["units"] == "1") {
-        units += "&temperature_unit=fahrenheit&windspeed_unit=mph";
+        units += "&temperature_unit=fahrenheit&windspeed_unit=mph&precipitation_unit=inch";
     }
 
     DynamicJsonDocument doc(1000);
@@ -940,7 +940,7 @@ void drawForecast(String &filename, JsonObject &cfgobj, const tagRecord *taginfo
     String tz = cfgobj["#tz"];
     String units = "";
     if (cfgobj["units"] == "1") {
-        units += "&temperature_unit=fahrenheit&windspeed_unit=mph";
+        units += "&temperature_unit=fahrenheit&windspeed_unit=mph&precipitation_unit=inch";
     }
 
     DynamicJsonDocument doc(2000);
@@ -990,10 +990,19 @@ void drawForecast(String &filename, JsonObject &cfgobj, const tagRecord *taginfo
         }
 
         if (loc["rain"]) {
-            const int8_t rain = round(daily["precipitation_sum"][dag].as<double>());
-            if (rain > 0) {
-                drawString(spr, String(rain) + "mm", dag * column1 + loc["rain"][0].as<int>(), loc["rain"][1], day[2], TC_DATUM, (rain > 10 ? imageParams.highlightColor : TFT_BLACK));
-            }
+           if (cfgobj["units"] == "0") {
+              const int8_t rain = round(daily["precipitation_sum"][dag].as<double>());
+              if (rain > 0) {
+                  drawString(spr, String(rain) + "mm", dag * column1 + loc["rain"][0].as<int>(), loc["rain"][1], day[2], TC_DATUM, (rain > 10 ? imageParams.highlightColor : TFT_BLACK));
+              }
+           } else {
+              double fRain = daily["precipitation_sum"][dag].as<double>();
+              fRain = round(fRain*100.0) / 100.0;
+              if (fRain > 0.0) {
+                 // inch, display if > .01 inches
+                  drawString(spr, String(fRain) + "in", dag * column1 + loc["rain"][0].as<int>(), loc["rain"][1], day[2], TC_DATUM, (fRain > 0.5 ? imageParams.highlightColor : TFT_BLACK));
+              }
+           }
         }
 
         drawString(spr, String(tmin) + " ", dag * column1 + day[0].as<int>(), day[4], day[2], TR_DATUM, (tmin < 0 ? imageParams.highlightColor : TFT_BLACK));
@@ -1162,7 +1171,7 @@ char *epoch_to_display(time_t utc) {
 #ifdef CONTENT_CAL
 bool getCalFeed(String &filename, JsonObject &cfgobj, tagRecord *&taginfo, imgParam &imageParams) {
     // google apps scripts method to retrieve calendar
-    // see https://github.com/jjwbruijn/OpenEPaperLink/wiki/Google-Apps-Scripts for description
+    // see https://github.com/OpenEPaperLink/OpenEPaperLink/wiki/Google-Apps-Scripts for description
 
     wsLog("get calendar");
 
@@ -1636,7 +1645,7 @@ void drawQR(String &filename, String qrcontent, String title, tagRecord *&taginf
 #ifdef CONTENT_BUIENRADAR
 uint8_t drawBuienradar(String &filename, JsonObject &cfgobj, tagRecord *&taginfo, imgParam &imageParams) {
     uint8_t refresh = 60;
-    wsLog("get weather");
+    wsLog("get buienradar");
 
     getLocation(cfgobj);
     HTTPClient http;
@@ -1644,7 +1653,7 @@ uint8_t drawBuienradar(String &filename, JsonObject &cfgobj, tagRecord *&taginfo
     String lat = cfgobj["#lat"];
     String lon = cfgobj["#lon"];
     // logLine("http drawBuienradar");
-    http.begin("https://gps.buienradar.nl/getrr.php?lat=" + lat + "&lon=" + lon);
+    http.begin("https://gadgets.buienradar.nl/data/raintext/?lat=" + lat + "&lon=" + lon);
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     http.setTimeout(5000);
     int httpCode = http.GET();
@@ -1683,7 +1692,7 @@ uint8_t drawBuienradar(String &filename, JsonObject &cfgobj, tagRecord *&taginfo
         drawString(spr, "Buienradar", loc["title"][0], loc["title"][1], loc["title"][2]);
 
         for (int i = 0; i < 24; i++) {
-            const int startPos = i * 11;
+            const int startPos = i * 10;
             uint8_t value = response.substring(startPos, startPos + 3).toInt();
             const String timestring = response.substring(startPos + 4, startPos + 9);
             const int minutes = timestring.substring(3).toInt();
@@ -1920,7 +1929,7 @@ String extractValueFromJson(JsonDocument &json, const String &path) {
             int index = atoi(segment);
             currentObj = currentObj.as<JsonArray>()[index];
         } else {
-            Serial.printf("Invalid JSON structure at path segment: %s\n", segment);
+            Serial.printf("Invalid JSON structure at path segment: %s\r\n", segment);
             return "";
         }
         segment = strtok(NULL, ".");

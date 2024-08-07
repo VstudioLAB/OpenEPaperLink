@@ -57,6 +57,8 @@
 #define SOLUM_M3_BW_58 0x42
 #define SOLUM_M3_PEGHOOK_BWR_13 0x43
 
+// Types using modchip
+#define MODCHIP_HD150_BWR_58 0x50
 
 // Hanshow Nebular types
 #define HS_NEBULAR_BWY_35 0x60
@@ -75,6 +77,7 @@
 #define GICI_BLE_TFT_BWR_42 0xB7
 #define GICI_BLE_EPD_BW_74 0xB8
 #define GICI_BLE_EPD_BWR_74 0xB9
+#define GICI_BLE_TFT_21_BW 0xBA
 #define GICI_BLE_EPD_BWR_29_SILABS 0xBD
 #define GICI_BLE_UNKNOWN 0xBF
 #define ATC_MI_THERMOMETER 0xBE

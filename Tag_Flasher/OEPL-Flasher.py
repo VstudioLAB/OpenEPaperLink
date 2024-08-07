@@ -15,11 +15,13 @@ CMD_SET_TESTP = 14
 
 CMD_ERASE_FLASH = 26
 CMD_ERASE_INFOPAGE = 27
+CMD_ERASE_ALL = 28
 CMD_SAVE_MAC_FROM_FW = 40
 CMD_PASS_THROUGH = 50
 
 CMD_SELECT_ZBS243 = 60
 CMD_SELECT_NRF82511 = 61
+CMD_SELECT_CC = 62
 
 CMD_SELECT_EEPROM_PT = 69
 
@@ -139,8 +141,8 @@ def validate_arguments(args):
         list_available_com_ports()
         return False
     if args.command:
-        if not (args.nrf82511 or args.zbs243):
-            print("Either -nrf82511 or -zbs243 option is required.")
+        if not (args.nrf82511 or args.zbs243 or args.ccxxxx):
+            print("Either -nrf82511, -zbs243 or -ccxxxx option is required.")
             return False
     if not (args.internalap or args.external or args.altradio):
         print("Using external port")
@@ -160,6 +162,19 @@ def validate_arguments(args):
     if args.command == "read" and len(args.filename) < 2:
         print("Please specify a file to save read data")
         return False
+    if args.ccxxxx:
+        if args.infopage:
+            print("-ccxxxx does not support --infopage")
+            return False
+        if args.eeprom:
+            print("-ccxxxx does not support --eeprom argument");
+            return False
+        if args.command == "autoflash":
+            print("-ccxxxx does not support autoflash command.");
+            return False
+        if args.command == "debug":
+            print("-ccxxxx does not support debug command.");
+            return False
     return True
 
 
@@ -281,7 +296,7 @@ def main():
             description="OpenEPaperLink Flasher for AP/Flasher board")
         parser.add_argument("-p", "--port", help="COM port to use")
         parser.add_argument("-t", "--ip", help="IP Address to use")
-        parser.add_argument("command", nargs="?", choices=["read", "write", "autoflash", "debug"], help="Command to execute")
+        parser.add_argument("command", nargs="?", choices=["read", "write", "erase", "autoflash", "debug"], help="Command to execute")
         parser.add_argument("filename", nargs="?",
                             help="Filename for read/write commands")
         parser.add_argument("-f", "--flash", action="store_true",
@@ -294,6 +309,9 @@ def main():
                             help="nRF82511 programming")
         parser.add_argument("-z", "--zbs243", action="store_true",
                             help="ZBS243 programming")
+        parser.add_argument("-c", "--ccxxxx", action="store_true",
+                            help="CCxxxx programming")
+
         parser.add_argument("--internalap", action="store_true",
                             help="Selects the internal accesspoint port")
         parser.add_argument("-e", "--external", action="store_true",
@@ -355,12 +373,13 @@ def main():
             cmd, answer = wait_for_command()
             send_cmd(CMD_SET_POWER, bytearray([1]))
             cmd, answer = wait_for_command()
+            time.sleep(0.2)
             send_cmd(CMD_RESET, bytearray([]))
             cmd, answer = wait_for_command()
             send_cmd(CMD_SELECT_EEPROM_PT, bytearray([])) ## selects eeprom serial loader mode
             cmd, answer = wait_for_command()
 
-        elif (args.flash or args.infopage):
+        elif (args.flash or args.infopage or args.command == "erase"):
             if (args.command != "debug"):
                 if args.internalap:
                     send_cmd(CMD_SELECT_PORT, bytearray([0]))
@@ -371,15 +390,26 @@ def main():
 
                 send_cmd(CMD_SET_POWER, bytearray([1]))
                 cmd, answer = wait_for_command()
+                time.sleep(0.2)
 
                 if args.nrf82511:
                     send_cmd(CMD_SELECT_NRF82511, bytearray([]))
                 if args.zbs243:
                     send_cmd(CMD_SELECT_ZBS243, bytearray([]))
+                if args.ccxxxx:
+                    send_cmd(CMD_SELECT_CC, bytearray([]))
+
                 cmd, answer = wait_for_command()
 
                 if (answer[0] == 1):
                     print("Connection established to microcontroller")
+                elif (answer[0] == 2):
+                    print("Established connection to the microcontroller, but it is locked.")
+                    if args.command != "erase":
+                        print("Call with 'erase' command to remove protection and erase all data.")
+                        print("WARNING: This will render the tag unusable until a new firmware and matching UICR (infopage) are flashed!")
+                        send_cmd(CMD_SET_POWER, bytearray([0]))
+                        exit(0)
                 else:
                     print("Failed to establish a connection to the microcontroller")
                     send_cmd(CMD_SET_POWER, bytearray([0]))
@@ -389,6 +419,15 @@ def main():
             read_from_serial(args.filename, args)
         elif args.command == "write":
             write_to_serial(args.filename, args)
+        elif args.command == "erase":
+            print(f"\nErasing chip... ")
+            send_cmd(CMD_ERASE_ALL, bytearray([]))
+            cmd, answer = wait_for_command()
+            if (cmd == CMD_ERASE_ALL):
+                print("DONE!\n")
+            else:
+                print("\nFailed to erase the chip?")
+                exit(0)
         elif args.command == "autoflash":
             print("Starting automatic tag flash")
             send_cmd(CMD_AUTOFLASH, bytearray([]))
