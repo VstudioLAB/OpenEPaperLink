@@ -17,7 +17,9 @@
 #include "radio.h"
 #include "sdkconfig.h"
 #include "second_uart.h"
+#ifdef CONFIG_IDF_TARGET_ESP32C6
 #include "soc/lp_uart_reg.h"
+#endif
 #include "soc/uart_struct.h"
 #include "utils.h"
 #include <esp_mac.h>
@@ -42,7 +44,7 @@ const uint8_t channelList[6] = {11, 15, 20, 25, 26, 27};
 struct pendingData pendingDataArr[MAX_PENDING_MACS];
 
 // VERSION GOES HERE!
-uint16_t version = 0x001d;
+uint16_t version = 0x001f;
 
 #define RAW_PKT_PADDING 2
 
@@ -472,7 +474,7 @@ void processBlockRequest(const uint8_t *buffer, uint8_t forceBlockDownload) {
             lastBlockRequest = getMillis();
         } else {
             // we're talking to another mac, let this mac know we can't accomodate another request right now
-            pr("BUSY!\n");
+            pr("BUSY!\n\r");
             sendCancelXfer(rxHeader->src);
             return;
         }
@@ -494,9 +496,9 @@ void processBlockRequest(const uint8_t *buffer, uint8_t forceBlockDownload) {
         if (forceBlockDownload) {
             if ((getMillis() - nextBlockAttempt) > 380) {
                 requestDataDownload = true;
-                pr("FORCED\n");
+                pr("FORCED\n\r");
             } else {
-                pr("IGNORED\n");
+                pr("IGNORED\n\r");
             }
         }
     }
@@ -645,7 +647,7 @@ void sendPart(uint8_t partNo) {
 }
 void sendBlockData() {
     if (getBlockDataLength() == 0) {
-        pr("Invalid block request received, 0 parts..\n");
+        pr("Invalid block request received, 0 parts..\n\r");
         requestedData.requestedParts[0] |= 0x01;
     }
 
@@ -658,7 +660,7 @@ void sendBlockData() {
             pr(".");
         }
     }
-    pr("\n");
+    pr("\n\r");
 
     uint8_t partNo = 0;
     while (partNo < BLOCK_MAX_PARTS) {
@@ -752,7 +754,11 @@ void app_main(void) {
 
     pr("RES>");
     pr("RDY>");
+#ifdef CONFIG_IDF_TARGET_ESP32C6
     ESP_LOGI(TAG, "C6 ready!");
+#else
+    ESP_LOGI(TAG, "H2 ready!");
+#endif
 
     housekeepingTimer = getMillis();
     while (1) {

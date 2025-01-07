@@ -31,8 +31,6 @@
 #include "webflasher.h"
 #endif
 
-extern uint8_t data_to_send[];
-
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 WifiManager wm;
@@ -68,7 +66,7 @@ size_t dbSize() {
 }
 
 void wsSendSysteminfo() {
-    DynamicJsonDocument doc(250);
+    DynamicJsonDocument doc(300);
     JsonObject sys = doc.createNestedObject("sys");
     time_t now;
     time(&now);
@@ -128,7 +126,7 @@ void wsSendSysteminfo() {
 #endif
 
     // reboot once at night
-    if (timeinfo.tm_hour == 4 && timeinfo.tm_min == 0 && millis() > 2 * 3600 * 1000) {
+    if (timeinfo.tm_hour == 3 && timeinfo.tm_min == 56 && millis() > 2 * 3600 * 1000 && config.nightlyreboot == 1) {
         logLine("Nightly reboot");
         wsErr("REBOOTING");
         config.runStatus = RUNSTATUS_STOP;
@@ -143,8 +141,10 @@ void wsSendSysteminfo() {
 
     static uint32_t tagcounttimer = 0;
     if (millis() - tagcounttimer > 60000 || tagcounttimer == 0) {
-        uint32_t timeoutcount = 0;
-        uint32_t tagcount = getTagCount(timeoutcount);
+        uint32_t timeoutcount = 0, lowbattcount = 0;
+        uint32_t tagcount = getTagCount(timeoutcount, lowbattcount);
+        sys["lowbattcount"] = lowbattcount;
+        sys["timeoutcount"] = timeoutcount;
         char result[40];
         if (timeoutcount > 0) {
             snprintf(result, sizeof(result), "%lu/%lu, %lu timeout", tagcount, tagDB.size(), timeoutcount);
@@ -310,7 +310,7 @@ void init_web() {
                                 Serial.println("getQueueItem: no queue item");
                                 request->send(404, "text/plain", "File not found");
                                 return;
-                            } 
+                            }
                             if (queueItem->data == nullptr) {
                                 fs::File file = contentFS->open(queueItem->filename);
                                 if (file) {
@@ -352,14 +352,20 @@ void init_web() {
             if (hex2mac(dst, mac)) {
                 tagRecord *taginfo = tagRecord::findByMAC(mac);
                 if (taginfo != nullptr) {
-                    uint16_t newContentMode = atoi(request->getParam("contentmode", true)->value().c_str());
-                    if (newContentMode != taginfo->contentMode && (newContentMode == 5 || newContentMode == 17 || newContentMode == 18)) {
-                        // temporary content, restore after sending
-                        pushTagInfo(taginfo);
+                    if (request->hasParam("contentmode", true)) {
+                        uint16_t newContentMode = atoi(request->getParam("contentmode", true)->value().c_str());
+                        if (newContentMode != taginfo->contentMode && (newContentMode == 5 || newContentMode == 17 || newContentMode == 18)) {
+                            // temporary content, restore after sending
+                            pushTagInfo(taginfo);
+                        }
+                        taginfo->contentMode = newContentMode;
                     }
-                    taginfo->alias = request->getParam("alias", true)->value();
-                    taginfo->modeConfigJson = request->getParam("modecfgjson", true)->value();
-                    taginfo->contentMode = newContentMode;
+                    if (request->hasParam("alias", true)) {
+                        taginfo->alias = request->getParam("alias", true)->value();
+                    }
+                    if (request->hasParam("modecfgjson", true)) {
+                        taginfo->modeConfigJson = request->getParam("modecfgjson", true)->value();
+                    }
                     taginfo->nextupdate = 0;
                     if (request->hasParam("rotate", true)) {
                         taginfo->rotate = atoi(request->getParam("rotate", true)->value().c_str());
@@ -509,7 +515,7 @@ void init_web() {
         udpsync.getAPList();
         AsyncResponseStream *response = request->beginResponseStream("application/json");
 
-        response->print("{");        
+        response->print("{");
 #ifdef C6_OTA_FLASHING
         response->print("\"C6\": \"1\", ");
 #else
@@ -594,6 +600,9 @@ void init_web() {
         if (request->hasParam("preview", true)) {
             config.preview = static_cast<uint8_t>(request->getParam("preview", true)->value().toInt());
         }
+        if (request->hasParam("nightlyreboot", true)) {
+            config.nightlyreboot = static_cast<uint8_t>(request->getParam("nightlyreboot", true)->value().toInt());
+        }
         if (request->hasParam("lock", true)) {
             config.lock = static_cast<uint8_t>(request->getParam("lock", true)->value().toInt());
         }
@@ -613,6 +622,9 @@ void init_web() {
             config.timeZone[sizeof(config.timeZone) - 1] = '\0';
             setenv("TZ", config.timeZone, 1);
             tzset();
+        }
+        if (request->hasParam("discovery", true)) {
+            config.discovery = static_cast<uint8_t>(request->getParam("discovery", true)->value().toInt());
         }
         if (request->hasParam("repo", true)) {
             config.repo = request->getParam("repo", true)->value();
@@ -888,6 +900,18 @@ void doImageUpload(AsyncWebServerRequest *request, String filename, size_t index
                         uint8_t dither = 1;
                         if (request->hasParam("dither", true)) {
                             dither = request->getParam("dither", true)->value().toInt();
+                        }
+                        if (request->hasParam("alias", true)) {
+                            taginfo->alias = request->getParam("alias", true)->value();
+                        }
+                        if (request->hasParam("rotate", true)) {
+                            taginfo->rotate = atoi(request->getParam("rotate", true)->value().c_str());
+                        }
+                        if (request->hasParam("lut", true)) {
+                            taginfo->lut = atoi(request->getParam("lut", true)->value().c_str());
+                        }
+                        if (request->hasParam("invert", true)) {
+                            taginfo->invert = atoi(request->getParam("invert", true)->value().c_str());
                         }
                         uint32_t ttl = 0;
                         if (request->hasParam("ttl", true)) {

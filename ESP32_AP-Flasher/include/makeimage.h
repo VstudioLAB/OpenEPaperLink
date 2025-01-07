@@ -17,7 +17,6 @@ struct imgParam {
     bool hasRed;
     uint8_t dataType;
     uint8_t dither;
-    // bool grayLut = false;
     uint8_t bufferbpp = 8;
     uint8_t rotate = 0;
     uint16_t highlightColor = 2;
@@ -39,6 +38,7 @@ struct imgParam {
     uint8_t preloadlut;
 
     uint8_t zlib;
+    uint8_t g5;
 };
 
 void spr2buffer(TFT_eSprite &spr, String &fileout, imgParam &imageParams);

@@ -15,6 +15,12 @@
 #include "ips_display.h"
 #endif
 
+#include "commstructs.h"
+#ifndef SAVE_SPACE
+#include "g5/Group5.h"
+#include "g5/g5enc.inl"
+#endif
+
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite spr = TFT_eSprite(&tft);
 
@@ -69,14 +75,43 @@ struct Error {
     int32_t b;
 };
 
-uint32_t colorDistance(Color &c1, Color &c2, Error &e1) {
-    e1.r = constrain(e1.r, -255, 255);
-    e1.g = constrain(e1.g, -255, 255);
-    e1.b = constrain(e1.b, -255, 255);
+uint32_t colorDistance(const Color &c1, const Color &c2, const Error &e1) {
     int32_t r_diff = c1.r + e1.r - c2.r;
     int32_t g_diff = c1.g + e1.g - c2.g;
     int32_t b_diff = c1.b + e1.b - c2.b;
-    return 3 * r_diff * r_diff + 6 * g_diff * g_diff + b_diff * b_diff;
+    if (abs(c1.r - c1.g) < 20 && abs(c1.b - c1.g) < 20) {
+        if (abs(c2.r - c2.g) > 20 || abs(c2.b - c2.g) > 20) return 4294967295;  // don't select color pixels on black and white
+    }
+    return 3 * r_diff * r_diff + 5.47 * g_diff * g_diff + 1.53 * b_diff * b_diff;
+}
+
+std::tuple<int, int, float, float> findClosestColors(const Color &pixel, const std::vector<Color> &palette) {
+    int closestIndex = -1, secondClosestIndex = -1;
+    float closestDist = std::numeric_limits<float>::max();
+    float secondClosestDist = std::numeric_limits<float>::max();
+    for (size_t i = 0; i < palette.size(); ++i) {
+        float dist = colorDistance(pixel, palette[i], (Error){0, 0, 0});
+        if (dist < closestDist) {
+            secondClosestIndex = closestIndex;
+            secondClosestDist = closestDist;
+            closestIndex = i;
+            closestDist = dist;
+        } else if (dist < secondClosestDist) {
+            secondClosestIndex = i;
+            secondClosestDist = dist;
+        }
+    }
+    if (closestIndex != -1 && secondClosestIndex != -1) {
+        auto rgbValue = [](const Color &color) {
+            return (color.r << 16) | (color.g << 8) | color.b;
+        };
+
+        if (rgbValue(palette[secondClosestIndex]) > rgbValue(palette[closestIndex])) {
+            std::swap(closestIndex, secondClosestIndex);
+            std::swap(closestDist, secondClosestDist);
+        }
+    }
+    return { closestIndex, secondClosestIndex, closestDist, secondClosestDist};
 }
 
 void spr2color(TFT_eSprite &spr, imgParam &imageParams, uint8_t *buffer, size_t buffer_size, bool is_red) {
@@ -84,7 +119,7 @@ void spr2color(TFT_eSprite &spr, imgParam &imageParams, uint8_t *buffer, size_t 
     long bufw = spr.width(), bufh = spr.height();
 
     if (imageParams.rotatebuffer % 2) {
-        //turn the image 90 or 270
+        // turn the image 90 or 270
         rotate = (rotate + 3) % 4;
         rotate = (rotate + (imageParams.rotatebuffer - 1)) % 4;
         bufw = spr.height();
@@ -106,11 +141,7 @@ void spr2color(TFT_eSprite &spr, imgParam &imageParams, uint8_t *buffer, size_t 
     Error *error_bufferold = new Error[bufw + 4];
     Error *error_buffernew = new Error[bufw + 4];
 
-    const uint8_t ditherMatrix[4][4] = {
-        {0, 9, 2, 10},
-        {12, 5, 14, 6},
-        {3, 11, 1, 8},
-        {15, 7, 13, 4}};
+    size_t bitOffset = 0;
 
     memset(error_bufferold, 0, bufw * sizeof(Error));
     for (uint16_t y = 0; y < bufh; y++) {
@@ -131,43 +162,72 @@ void spr2color(TFT_eSprite &spr, imgParam &imageParams, uint8_t *buffer, size_t 
                     break;
             }
 
-            if (imageParams.dither == 2) {
-                // Ordered dithering
-                uint8_t ditherValue = ditherMatrix[y % 4][x % 4];
-                error_bufferold[x].r = (ditherValue << 4) - 120;  // * 256 / 16 - 128 + 8
-                error_bufferold[x].g = (ditherValue << 4) - 120;
-                error_bufferold[x].b = (ditherValue << 4) - 120;
-            }
-
             int best_color_index = 0;
-            uint32_t best_color_distance = colorDistance(color, palette[0], error_bufferold[x]);
-
-            for (int i = 1; i < num_colors; i++) {
-                if (best_color_distance == 0) break;
-                uint32_t distance = colorDistance(color, palette[i], error_bufferold[x]);
-                if (distance < best_color_distance) {
-                    best_color_distance = distance;
-                    best_color_index = i;
+            if (imageParams.dither == 2) {
+                // special ordered dithering
+                auto [c1Index, c2Index, distC1, distC2] = findClosestColors(color, palette);
+                Color c1 = palette[c1Index];
+                Color c2 = palette[c2Index];
+                float weight = distC1 / (distC1 + distC2);
+                if (weight <= 0.03) {
+                    best_color_index = c1Index;
+                } else if (weight < 0.30) {
+                    best_color_index = ((y % 2 && ((y / 2 + x) % 2)) ? c2Index : c1Index);
+                } else if (weight < 0.70) {
+                    best_color_index = ((x + y) % 2 ? c2Index : c1Index);
+                } else if (weight < 0.97) {
+                    best_color_index = ((y % 2 && ((y / 2 + x) % 2)) % 2 ? c1Index : c2Index);
+                } else {
+                    best_color_index = c2Index;
                 }
             }
-            uint8_t bitIndex = 7 - (x % 8);
-            uint32_t byteIndex = (y * bufw + x) / 8;
 
-            // this looks a bit ugly, but it's performing better than shorter notations
-            switch (best_color_index) {
-                case 1:
-                    if (!is_red)
+            if (imageParams.dither == 1 || imageParams.dither == 0) {
+                uint32_t best_color_distance = colorDistance(color, palette[0], error_bufferold[x]);
+
+                for (int i = 1; i < num_colors; i++) {
+                    if (best_color_distance == 0) break;
+                    uint32_t distance = colorDistance(color, palette[i], error_bufferold[x]);
+                    if (distance < best_color_distance) {
+                        best_color_distance = distance;
+                        best_color_index = i;
+                    }
+                }
+            }
+
+            if (imageParams.bpp == 3 || imageParams.bpp == 4) {
+                size_t byteIndex = bitOffset / 8;
+                uint8_t bitIndex = bitOffset % 8;
+
+                if (bitIndex + imageParams.bpp <= 8) {
+                    buffer[byteIndex] |= best_color_index << (8 - bitIndex - imageParams.bpp);
+                } else {
+                    uint8_t highPart = best_color_index >> (bitIndex + imageParams.bpp - 8);
+                    uint8_t lowPart = best_color_index & ((1 << (bitIndex + imageParams.bpp - 8)) - 1);
+                    buffer[byteIndex] |= highPart;
+                    buffer[byteIndex + 1] |= lowPart << (8 - (bitIndex + imageParams.bpp - 8));
+                }
+                bitOffset += imageParams.bpp;
+            } else {
+                uint8_t bitIndex = 7 - (x % 8);
+                uint32_t byteIndex = (y * bufw + x) / 8;
+
+                // this looks a bit ugly, but it's performing better than shorter notations
+                switch (best_color_index) {
+                    case 1:
+                        if (!is_red)
+                            buffer[byteIndex] |= (1 << bitIndex);
+                        break;
+                    case 2:
+                        imageParams.hasRed = true;
+                        if (is_red)
+                            buffer[byteIndex] |= (1 << bitIndex);
+                        break;
+                    case 3:
+                        imageParams.hasRed = true;
                         buffer[byteIndex] |= (1 << bitIndex);
-                    break;
-                case 2:
-                    imageParams.hasRed = true;
-                    if (is_red)
-                        buffer[byteIndex] |= (1 << bitIndex);
-                    break;
-                case 3:
-                    imageParams.hasRed = true;
-                    buffer[byteIndex] |= (1 << bitIndex);
-                    break;
+                        break;
+                }
             }
 
             if (imageParams.dither == 1) {
@@ -178,34 +238,44 @@ void spr2color(TFT_eSprite &spr, imgParam &imageParams, uint8_t *buffer, size_t 
                     color.g + error_bufferold[x].g - palette[best_color_index].g,
                     color.b + error_bufferold[x].b - palette[best_color_index].b};
 
-                error_buffernew[x].r += error.r >> 2;
-                error_buffernew[x].g += error.g >> 2;
-                error_buffernew[x].b += error.b >> 2;
+                float scaling_factor = 255.0f / std::max(std::abs(error.r), std::max(std::abs(error.g), std::abs(error.b)));
+                if (scaling_factor < 1.0f) {
+                    error.r *= scaling_factor;
+                    error.g *= scaling_factor;
+                    error.b *= scaling_factor;
+                }
+
+                error_buffernew[x].r += error.r / 4;
+                error_buffernew[x].g += error.g / 4;
+                error_buffernew[x].b += error.b / 4;
+
                 if (x > 0) {
-                    error_buffernew[x - 1].r += error.r >> 3;
-                    error_buffernew[x - 1].g += error.g >> 3;
-                    error_buffernew[x - 1].b += error.b >> 3;
+                    error_buffernew[x - 1].r += error.r / 8;
+                    error_buffernew[x - 1].g += error.g / 8;
+                    error_buffernew[x - 1].b += error.b / 8;
                 }
+
                 if (x > 1) {
-                    error_buffernew[x - 2].r += error.r >> 4;
-                    error_buffernew[x - 2].g += error.g >> 4;
-                    error_buffernew[x - 2].b += error.b >> 4;
+                    error_buffernew[x - 2].r += error.r / 16;
+                    error_buffernew[x - 2].g += error.g / 16;
+                    error_buffernew[x - 2].b += error.b / 16;
                 }
-                error_buffernew[x + 1].r += error.r >> 3;
-                error_buffernew[x + 1].g += error.g >> 3;
-                error_buffernew[x + 1].b += error.b >> 3;
 
-                error_bufferold[x + 1].r += error.r >> 2;
-                error_bufferold[x + 1].g += error.g >> 2;
-                error_bufferold[x + 1].b += error.b >> 2;
+                error_buffernew[x + 1].r += error.r / 8;
+                error_buffernew[x + 1].g += error.g / 8;
+                error_buffernew[x + 1].b += error.b / 8;
 
-                error_buffernew[x + 2].r += error.r >> 4;
-                error_buffernew[x + 2].g += error.g >> 4;
-                error_buffernew[x + 2].b += error.b >> 4;
+                error_bufferold[x + 1].r += error.r / 4;
+                error_bufferold[x + 1].g += error.g / 4;
+                error_bufferold[x + 1].b += error.b / 4;
 
-                error_bufferold[x + 2].r += error.r >> 3;
-                error_bufferold[x + 2].g += error.g >> 3;
-                error_bufferold[x + 2].b += error.b >> 3;
+                error_buffernew[x + 2].r += error.r / 16;
+                error_buffernew[x + 2].g += error.g / 16;
+                error_buffernew[x + 2].b += error.b / 16;
+
+                error_bufferold[x + 2].r += error.r / 8;
+                error_bufferold[x + 2].g += error.g / 8;
+                error_bufferold[x + 2].b += error.b / 8;
             }
         }
         memcpy(error_bufferold, error_buffernew, bufw * sizeof(Error));
@@ -225,7 +295,10 @@ size_t prepareHeader(uint8_t headerbuf[], uint16_t bufw, uint16_t bufh, imgParam
     memcpy(headerbuf + (imageParams.rotatebuffer % 2 == 1 ? 3 : 1), &bufw, sizeof(uint16_t));
     memcpy(headerbuf + (imageParams.rotatebuffer % 2 == 1 ? 1 : 3), &bufh, sizeof(uint16_t));
 
-    if (imageParams.hasRed && imageParams.bpp > 1) {
+    if (imageParams.bpp == 3 || imageParams.bpp == 4) {
+        totalbytes = buffer_size * imageParams.bpp + headersize;
+        headerbuf[5] = imageParams.bpp;
+    } else if (imageParams.hasRed && imageParams.bpp > 1) {
         totalbytes = buffer_size * 2 + headersize;
         headerbuf[5] = 2;
     } else {
@@ -265,6 +338,33 @@ void rewriteHeader(File &f_out) {
     f_out.write(flg);
 }
 
+#ifndef SAVE_SPACE
+uint8_t *g5Compress(uint16_t width, uint16_t height, uint8_t *buffer, uint16_t buffersize, uint16_t &outBufferSize) {
+    G5ENCIMAGE g5enc;
+    int rc;
+    uint8_t *outbuffer = (uint8_t *)ps_malloc(buffersize+16384);
+    if (outbuffer == NULL) {
+        Serial.println("Failed to allocate the output buffer for the G5 encoder");
+        return nullptr;
+    }
+
+    rc = g5_encode_init(&g5enc, width, height, outbuffer, buffersize);
+    for (int y = 0; y < height && rc == G5_SUCCESS; y++) {
+        rc = g5_encode_encodeLine(&g5enc, buffer);
+        buffer += (width / 8);
+        if (rc != G5_SUCCESS) break;
+    }
+    if (rc == G5_ENCODE_COMPLETE) {
+        outBufferSize = g5_encode_getOutSize(&g5enc);
+    } else {
+        printf("Encode failed! rc=%d\n", rc);
+        free(outbuffer);
+        return nullptr;
+    }
+    return outbuffer;
+}
+#endif
+
 void spr2buffer(TFT_eSprite &spr, String &fileout, imgParam &imageParams) {
     long t = millis();
 
@@ -273,7 +373,11 @@ void spr2buffer(TFT_eSprite &spr, String &fileout, imgParam &imageParams) {
     if (fileout == "direct") {
         if (tftOverride == false) {
             TFT_eSprite spr2 = TFT_eSprite(&tft2);
+#ifdef ST7735_NANO_TLSR
+            tft2.setRotation(1);
+#else
             tft2.setRotation(YellowSense == 1 ? 1 : 3);
+#endif
             spr2.createSprite(spr.width(), spr.height());
             spr2.setColorDepth(spr.getColorDepth());
 
@@ -282,7 +386,19 @@ void spr2buffer(TFT_eSprite &spr, String &fileout, imgParam &imageParams) {
             size_t dataSize = spr.width() * spr.height() * (spr.getColorDepth() / 8);
             memcpy(spriteData2, spriteData, dataSize);
 
+#ifdef HAS_LILYGO_TPANEL
+            if (spr.getColorDepth() == 16) {
+                long dy = spr.height();
+                long dx = spr.width();
+
+                uint16_t *data = static_cast<uint16_t *>(const_cast<void *>(spriteData2));
+
+                gfx->draw16bitRGBBitmap(0, 0, (uint16_t *)spriteData2, dx, dy);
+                spr2.deleteSprite();
+            }
+#else
             spr2.pushSprite(0, 0);
+#endif
         }
         return;
     }
@@ -301,6 +417,7 @@ void spr2buffer(TFT_eSprite &spr, String &fileout, imgParam &imageParams) {
 #else
             uint8_t *buffer = (uint8_t *)malloc(buffer_size);
             imageParams.zlib = 0;
+            imageParams.g5 = 0;
 #endif
             if (!buffer) {
                 Serial.println("Failed to allocate buffer");
@@ -341,6 +458,69 @@ void spr2buffer(TFT_eSprite &spr, String &fileout, imgParam &imageParams) {
                 free(comp);
 
                 rewriteHeader(f_out);
+#ifndef SAVE_SPACE
+            } else if (imageParams.g5) {
+                // handling for G5-compressed image data
+
+                uint8_t headerbuf[6];
+                prepareHeader(headerbuf, bufw, bufh, imageParams, buffer_size);
+                f_out.write(headerbuf, sizeof(headerbuf));
+
+                uint16_t height = imageParams.height;  // spr.height();
+                uint16_t width = imageParams.width;
+                spr.width();
+                if (imageParams.hasRed && imageParams.bpp > 1) {
+                    uint8_t *newbuffer = (uint8_t *)ps_realloc(buffer, 2 * buffer_size);
+                    if (newbuffer == NULL) {
+                        Serial.println("Failed to allocate larger buffer for 2bpp G5");
+                        free(buffer);
+                        f_out.close();
+                        xSemaphoreGive(fsMutex);
+                        return;
+                    }
+                    buffer = newbuffer;
+                    spr2color(spr, imageParams, buffer + buffer_size, buffer_size, true);
+                    buffer_size *= 2;
+                    // double the height, to do two layers sequentially
+                    if (imageParams.rotatebuffer % 2) {
+                        width *= 2;
+                    } else {
+                        height *= 2;
+                    }
+                }
+                uint16_t outbufferSize = 0;
+                uint8_t *outBuffer;
+                bool compressionSuccessful = true;
+                if (imageParams.rotatebuffer % 2) {
+                    outBuffer = g5Compress(height, width, buffer, buffer_size, outbufferSize);
+                } else {
+                    outBuffer = g5Compress(width, height, buffer, buffer_size, outbufferSize);
+                }
+                if (outBuffer == NULL) {
+                    Serial.println("Failed to compress G5");
+                    compressionSuccessful = false;
+                } else {
+                    printf("Compressed %d to %d bytes\n", buffer_size, outbufferSize);
+                    if (outbufferSize > buffer_size) {
+                        printf("That wasn't very useful, falling back to raw\n");
+                        compressionSuccessful = false;
+                    } else {
+                        f_out.write(outBuffer, outbufferSize);
+                    }
+                    free(outBuffer);
+                }
+                if (!compressionSuccessful) {
+                    // if we failed to compress the image, or the resulting image was larger than a raw file, fallback
+                    imageParams.g5 = false;
+                    if (imageParams.hasRed && imageParams.bpp > 1) {
+                        imageParams.dataType = DATATYPE_IMG_RAW_2BPP;
+                    } else {
+                        imageParams.dataType = DATATYPE_IMG_RAW_1BPP;
+                    }
+                    f_out.seek(0);
+                    f_out.write(buffer, buffer_size);
+                }
+#endif
             } else {
                 f_out.write(buffer, buffer_size);
                 if (imageParams.hasRed && imageParams.bpp > 1) {
@@ -348,6 +528,24 @@ void spr2buffer(TFT_eSprite &spr, String &fileout, imgParam &imageParams) {
                     f_out.write(buffer, buffer_size);
                 }
             }
+
+            free(buffer);
+        } break;
+
+        case 3:
+        case 4: {
+            long bufw = spr.width(), bufh = spr.height();
+            size_t buffer_size = (bufw * bufh) / 8 * imageParams.bpp;
+            uint8_t *buffer = (uint8_t *)ps_malloc(buffer_size);
+            if (!buffer) {
+                Serial.println("Failed to allocate buffer");
+                util::printLargestFreeBlock();
+                f_out.close();
+                xSemaphoreGive(fsMutex);
+                return;
+            }
+            spr2color(spr, imageParams, buffer, buffer_size, false);
+            f_out.write(buffer, buffer_size);
 
             free(buffer);
         } break;

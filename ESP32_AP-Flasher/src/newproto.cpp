@@ -273,7 +273,10 @@ void prepareExternalDataAvail(struct pendingData* pending, IPAddress remoteIP) {
             case DATATYPE_IMG_DIFF:
             case DATATYPE_IMG_ZLIB:
             case DATATYPE_IMG_RAW_1BPP:
-            case DATATYPE_IMG_RAW_2BPP: {
+            case DATATYPE_IMG_RAW_2BPP:
+            case DATATYPE_IMG_G5:
+            case DATATYPE_IMG_RAW_3BPP:
+            case DATATYPE_IMG_RAW_4BPP: {
                 char hexmac[17];
                 mac2hex(pending->targetMac, hexmac);
                 String filename = "/current/" + String(hexmac) + "_" + String(millis() % 1000000) + ".pending";
@@ -336,8 +339,7 @@ void prepareExternalDataAvail(struct pendingData* pending, IPAddress remoteIP) {
                 break;
             }
             case DATATYPE_NFC_RAW_CONTENT:
-            case DATATYPE_NFC_URL_DIRECT:
-            case DATATYPE_CUSTOM_LUT_OTA: {
+            case DATATYPE_NFC_URL_DIRECT: {
                 char hexmac[17];
                 mac2hex(pending->targetMac, hexmac);
                 char dataUrl[80];
@@ -346,7 +348,7 @@ void prepareExternalDataAvail(struct pendingData* pending, IPAddress remoteIP) {
                 snprintf(dataUrl, sizeof(dataUrl), "http://%s/getdata?mac=%s&md5=%s", remoteIP.toString().c_str(), hexmac, md5);
                 wsLog("GET " + String(dataUrl));
                 HTTPClient http;
-                logLine("http DATATYPE_CUSTOM_LUT_OTA " + String(dataUrl));
+                logLine("http DATATYPE_NFC_* " + String(dataUrl));
                 http.begin(dataUrl);
                 int httpCode = http.GET();
                 if (httpCode == 200) {
@@ -445,9 +447,11 @@ void processXferComplete(struct espXferComplete* xfc, bool local) {
             contentFS->remove(dst_path);
         }
         if (contentFS->exists(queueItem->filename)) {
-            if (config.preview && (queueItem->pendingdata.availdatainfo.dataType == DATATYPE_IMG_RAW_2BPP || queueItem->pendingdata.availdatainfo.dataType == DATATYPE_IMG_RAW_1BPP || queueItem->pendingdata.availdatainfo.dataType == DATATYPE_IMG_ZLIB)) {
+            uint8_t dataType = queueItem->pendingdata.availdatainfo.dataType;
+            if (config.preview && dataType != DATATYPE_FW_UPDATE && dataType != DATATYPE_NOUPDATE) {
                 contentFS->rename(queueItem->filename, String(dst_path));
-            } else {
+                }
+            else {
                 if (queueItem->pendingdata.availdatainfo.dataType != DATATYPE_FW_UPDATE) contentFS->remove(queueItem->filename);
             }
         }
@@ -748,6 +752,35 @@ bool sendTagCommand(const uint8_t* dst, uint8_t cmd, bool local, const uint8_t* 
     }
 }
 
+bool sendTagMac(const uint8_t* dst, const uint64_t newmac, bool local) {
+    struct pendingData pending = {0};
+    memcpy(pending.targetMac, dst, 8);
+    pending.availdatainfo.dataType = DATATYPE_COMMAND_DATA;
+    pending.availdatainfo.dataTypeArgument = 0x23;
+    pending.availdatainfo.nextCheckIn = 0;
+    
+
+    pending.availdatainfo.dataVer = newmac;
+    pending.availdatainfo.dataSize = 0;
+
+    pending.attemptsLeft = MAX_XFER_ATTEMPTS;
+    Serial.printf(">Tag %02X%02X%02X%02X%02X%02X%02X%02X Mac set\r\n\0", dst[7], dst[6], dst[5], dst[4], dst[3], dst[2], dst[1], dst[0]);
+
+    tagRecord* taginfo = tagRecord::findByMAC(dst);
+    if (taginfo != nullptr) {
+        taginfo->pendingCount++;
+        wsSendTaginfo(taginfo->mac, SYNC_TAGSTATUS);
+    }
+
+    if (local) {
+        return queueDataAvail(&pending, true);
+    } else {
+        queueDataAvail(&pending, false);
+        udpsync.netSendDataAvail(&pending);
+        return true;
+    }
+}
+
 void updateTaginfoitem(struct TagInfo* taginfoitem, IPAddress remoteIP) {
     tagRecord* taginfo = tagRecord::findByMAC(taginfoitem->mac);
 
@@ -953,20 +986,23 @@ bool queueDataAvail(struct pendingData* pending, bool local) {
         taginfo->data = nullptr;
     } else {
         newPending.data = nullptr;
-
-        // optional: read data early, don't wait for block request.
-        fs::File file = contentFS->open(newPending.filename);
-        if (file) {
-            newPending.data = getDataForFile(file);
-            Serial.println("Reading file " + String(newPending.filename));
-            file.close();
-        } else {
-            Serial.println("Warning: not found: " + String(newPending.filename));
+        
+        if (pendingQueue.size() < 5) {   // maximized to 5 to save some memory
+            // optional: read data early, don't wait for block request.
+            fs::File file = contentFS->open(newPending.filename);
+            if (file) {
+                newPending.data = getDataForFile(file);
+                Serial.println("Reading file " + String(newPending.filename));
+                file.close();
+            } else {
+                Serial.println("Warning: not found: " + String(newPending.filename));
+            }
         }
     }
     newPending.len = taginfo->len;
 
-    if ((pending->availdatainfo.dataType == DATATYPE_IMG_RAW_1BPP || pending->availdatainfo.dataType == DATATYPE_IMG_RAW_2BPP || pending->availdatainfo.dataType == DATATYPE_IMG_ZLIB) && (pending->availdatainfo.dataTypeArgument & 0xF8) == 0x00) {
+    uint8_t dataType = pending->availdatainfo.dataType;
+    if (dataType != DATATYPE_FW_UPDATE && dataType != DATATYPE_NOUPDATE && pending->availdatainfo.dataTypeArgument & 0xF8 == 0x00) {
         // in case of an image (no preload), remove already queued images
         pendingQueue.erase(std::remove_if(pendingQueue.begin(), pendingQueue.end(),
                                           [pending](const PendingItem& item) {
