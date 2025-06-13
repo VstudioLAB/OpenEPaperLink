@@ -651,6 +651,16 @@ select {
 	text-align: center;
 }
 
+.waitingicon {
+    display: none;
+    font-size: 1.2em;
+    background-color: lightgreen;
+    color: black;
+    height: 20px;
+    width: 20px;
+    vertical-align: top;
+    text-align: center;
+}
 ul.messages {
 	padding: 5px;
 }
@@ -825,37 +835,37 @@ h4 {
 	font-weight: bold;
 }
 
-#releasetable {
+.releasetable {
 	margin: 10px 0px;
 }
 
-#releasetable table {
+.releasetable table {
 	border-spacing: 1px;
 }
 
-#releasetable th {
+.releasetable th {
 	text-align: left;
 	background-color: #ffffff;
 	padding: 1px 5px;
 }
 
-#releasetable td {
+.releasetable td {
 	background-color: #ffffff;
 	padding: 1px 5px;
 	min-width: 70px;
 	vertical-align: baseline;
 }
 
-#releasetable td:nth-child(2) {
+.releasetable td:nth-child(2) {
 	white-space: nowrap;
 }
 
-#releasetable button {
+.releasetable button {
 	padding: 3px 10px;
 	background-color: #e0e0e0;
 }
 
-#releasetable button:hover {
+.releasetable button:hover {
 	background-color: #a0a0a0;
 }
 
@@ -866,7 +876,7 @@ h4 {
 .console {
 	width: 450px;
 	background-color: black;
-	font-family: 'lucida console', 'ui-monospace';
+	font-family: 'lucida console', 'ui-monospace', 'monospace';
 	color: white;
 	padding: 5px 10px;
 	padding-bottom: 25px;

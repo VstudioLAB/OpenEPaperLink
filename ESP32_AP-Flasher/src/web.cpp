@@ -39,7 +39,7 @@ SemaphoreHandle_t wsMutex;
 uint32_t lastssidscan = 0;
 
 void wsLog(const String &text) {
-    StaticJsonDocument<250> doc;
+    JsonDocument doc;
     doc["logMsg"] = text;
     if (wsMutex) xSemaphoreTake(wsMutex, portMAX_DELAY);
     ws.textAll(doc.as<String>());
@@ -47,7 +47,7 @@ void wsLog(const String &text) {
 }
 
 void wsErr(const String &text) {
-    StaticJsonDocument<250> doc;
+    JsonDocument doc;
     doc["errMsg"] = text;
     if (wsMutex) xSemaphoreTake(wsMutex, portMAX_DELAY);
     ws.textAll(doc.as<String>());
@@ -66,8 +66,8 @@ size_t dbSize() {
 }
 
 void wsSendSysteminfo() {
-    DynamicJsonDocument doc(300);
-    JsonObject sys = doc.createNestedObject("sys");
+    JsonDocument doc;
+    JsonObject sys = doc["sys"].to<JsonObject>();
     time_t now;
     time(&now);
     static int freeSpaceLastRun = 0;
@@ -107,7 +107,7 @@ void wsSendSysteminfo() {
         strftime(timeBuffer, sizeof(timeBuffer), languageDateFormat[0].c_str(), &timeinfo);
         setVarDB("ap_date", timeBuffer);
     }
-    setVarDB("ap_ip", WiFi.localIP().toString());
+    setVarDB("ap_ip", wm.localIP().toString());
 
 #ifdef HAS_SUBGHZ
     String ApChanString = String(apInfo.channel);
@@ -206,8 +206,8 @@ void wsSendTaginfo(const uint8_t *mac, uint8_t syncMode) {
 }
 
 void wsSendAPitem(struct APlist *apitem) {
-    DynamicJsonDocument doc(250);
-    JsonObject ap = doc.createNestedObject("apitem");
+    JsonDocument doc;
+    JsonObject ap = doc["apitem"].to<JsonObject>();
 
     char version_str[6];
     sprintf(version_str, "%04X", apitem->version);
@@ -228,7 +228,7 @@ void wsSerial(const String &text) {
 }
 
 void wsSerial(const String &text, const String &color) {
-    StaticJsonDocument<250> doc;
+    JsonDocument doc;
     doc["console"] = text;
     if (!color.isEmpty()) doc["color"] = color;
     Serial.println(text);
@@ -322,7 +322,7 @@ void init_web() {
                                     return;
                                 }
                             }
-                            request->send_P(200, "application/octet-stream", queueItem->data, queueItem->len);
+                            request->send(200, "application/octet-stream", queueItem->data, queueItem->len);
                             return;
                         }
                     } else {
@@ -336,7 +336,7 @@ void init_web() {
                             taginfo->data = getDataForFile(file);
                             file.close();
                         }
-                        request->send_P(200, "application/octet-stream", taginfo->data, taginfo->len);
+                        request->send(200, "application/octet-stream", taginfo->data, taginfo->len);
                         return;
                     }
                 }
@@ -514,13 +514,21 @@ void init_web() {
         UDPcomm udpsync;
         udpsync.getAPList();
         AsyncResponseStream *response = request->beginResponseStream("application/json");
+        String HasC6 = "0";
+        String HasH2 = "0";
+        String HasTSLR = "0";
 
         response->print("{");
-#ifdef C6_OTA_FLASHING
-        response->print("\"C6\": \"1\", ");
-#else
-        response->print("\"C6\": \"0\", ");
+#ifdef HAS_H2
+        HasH2 = "1";
+#elif defined(HAS_TSLR)
+        HasTSLR = "1";
+#elif defined(C6_OTA_FLASHING)
+        HasC6 = "1";
 #endif
+        response->print("\"C6\": \"" + HasC6 + "\", ");
+        response->print("\"H2\": \"" + HasH2 + "\", ");
+        response->print("\"TLSR\": \"" + HasTSLR + "\", ");
 #ifdef SAVE_SPACE
         response->print("\"savespace\": \"1\", ");
 #else
@@ -626,6 +634,9 @@ void init_web() {
         if (request->hasParam("discovery", true)) {
             config.discovery = static_cast<uint8_t>(request->getParam("discovery", true)->value().toInt());
         }
+        if (request->hasParam("showtimestamp", true)) {
+            config.showtimestamp = static_cast<uint8_t>(request->getParam("showtimestamp", true)->value().toInt());
+        }
         if (request->hasParam("repo", true)) {
             config.repo = request->getParam("repo", true)->value();
         }
@@ -650,7 +661,7 @@ void init_web() {
     });
     server.on("/set_vars", HTTP_POST, [](AsyncWebServerRequest *request) {
         if (request->hasParam("json", true)) {
-            DynamicJsonDocument jsonDocument(2048);
+            JsonDocument jsonDocument;
             DeserializationError error = deserializeJson(jsonDocument, request->getParam("json", true)->value());
             if (error) {
                 request->send(400, "text/plain", "Failed to parse JSON");
@@ -677,7 +688,7 @@ void init_web() {
     server.on("/get_wifi_config", HTTP_GET, [](AsyncWebServerRequest *request) {
         Preferences preferences;
         AsyncResponseStream *response = request->beginResponseStream("application/json");
-        StaticJsonDocument<250> doc;
+        JsonDocument doc;
         preferences.begin("wifi", false);
         const char *keys[] = {"ssid", "pw", "ip", "mask", "gw", "dns"};
         const size_t numKeys = sizeof(keys) / sizeof(keys[0]);
@@ -691,13 +702,13 @@ void init_web() {
 
     server.on("/get_ssid_list", HTTP_GET, [](AsyncWebServerRequest *request) {
         AsyncResponseStream *response = request->beginResponseStream("application/json");
-        DynamicJsonDocument doc(5000);
+        JsonDocument doc;
 
         doc["scanstatus"] = WiFi.scanComplete();
-        JsonArray networks = doc.createNestedArray("networks");
+        JsonArray networks = doc["networks"].to<JsonArray>();
         for (int i = 0; i < (WiFi.scanComplete() > 50 ? 50 : WiFi.scanComplete()); ++i) {
             if (WiFi.SSID(i) != "") {
-                JsonObject network = networks.createNestedObject();
+                JsonObject network = networks.add<JsonObject>();
                 network["ssid"] = WiFi.SSID(i);
                 network["ch"] = WiFi.channel(i);
                 network["rssi"] = WiFi.RSSI(i);
@@ -723,7 +734,7 @@ void init_web() {
         const size_t numKeys = sizeof(keys) / sizeof(keys[0]);
         for (size_t i = 0; i < numKeys; i++) {
             String key = keys[i];
-            if (jsonObj.containsKey(key)) {
+            if (jsonObj[key].is<String>()) {
                 preferences.putString(key.c_str(), jsonObj[key].as<String>());
             }
         }
@@ -866,10 +877,11 @@ void doImageUpload(AsyncWebServerRequest *request, String filename, size_t index
                     file.write(uploadInfo->buffer, uploadInfo->bufferSize);
                     file.close();
                     uploadInfo->bufferSize = 0;
+                    xSemaphoreGive(fsMutex);
                 } else {
+                    xSemaphoreGive(fsMutex);
                     logLine("Failed to open file for appending: " + uploadfilename);
                 }
-                xSemaphoreGive(fsMutex);
 
                 memcpy(uploadInfo->buffer, data, len);
                 uploadInfo->bufferSize = len;
@@ -883,10 +895,11 @@ void doImageUpload(AsyncWebServerRequest *request, String filename, size_t index
                 if (file) {
                     file.write(uploadInfo->buffer, uploadInfo->bufferSize);
                     file.close();
+                    xSemaphoreGive(fsMutex);
                 } else {
+                    xSemaphoreGive(fsMutex);
                     logLine("Failed to open file for appending: " + uploadfilename);
                 }
-                xSemaphoreGive(fsMutex);
                 request->_tempObject = nullptr;
                 delete uploadInfo;
             }
@@ -956,7 +969,7 @@ void doJsonUpload(AsyncWebServerRequest *request) {
         uint8_t mac[8];
         if (hex2mac(dst, mac)) {
             xSemaphoreTake(fsMutex, portMAX_DELAY);
-            File file = LittleFS.open("/current/" + dst + ".json", "w");
+            File file = contentFS->open("/current/" + dst + ".json", "w");
             if (!file) {
                 request->send(400, "text/plain", "Failed to create file");
                 xSemaphoreGive(fsMutex);

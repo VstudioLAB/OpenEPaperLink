@@ -28,12 +28,37 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include "logging.h"
 #include "SubGigRadio.h"
 
 
 static const char *TAG = "MAIN";
 
 const uint8_t channelList[6] = {11, 15, 20, 25, 26, 27};
+
+#if CONFIG_OEPL_VERBOSE_DEBUG
+const struct {
+   uint8_t Type;
+   const char *Name;
+} gPktTypeLookupTbl[] = {
+   {PKT_TAG_RETURN_DATA, "TAG_RETURN_DATA"},
+   {PKT_TAG_RETURN_DATA_ACK, "TAG_RETURN_DATA_ACK"},
+   {PKT_AVAIL_DATA_SHORTREQ, "AVAIL_DATA_SHORTREQ"},
+   {PKT_AVAIL_DATA_REQ, "AVAIL_DATA_REQ"},
+   {PKT_AVAIL_DATA_INFO, "AVAIL_DATA_INFO"},
+   {PKT_BLOCK_PARTIAL_REQUEST, "BLOCK_PARTIAL_REQUEST"},
+   {PKT_BLOCK_REQUEST_ACK, "BLOCK_REQUEST_ACK"},
+   {PKT_BLOCK_REQUEST, "BLOCK_REQUEST"},
+   {PKT_BLOCK_PART, "BLOCK_PART"},
+   {PKT_XFER_COMPLETE, "XFER_COMPLETE"},
+   {PKT_XFER_COMPLETE_ACK, "XFER_COMPLETE_ACK"},
+   {PKT_CANCEL_XFER, "CANCEL_XFER"},
+   {PKT_PING, "PING"},
+   {PKT_PONG, "PONG"},
+   {0,NULL} // End of table
+};
+#endif
+
 
 #define DATATYPE_NOUPDATE 0
 #define HW_TYPE           0xC6
@@ -124,7 +149,7 @@ uint8_t getBlockDataLength() {
 }
 
 // pendingdata slot stuff
-int8_t findSlotForMac(const uint8_t *mac) {
+int32_t findSlotForMac(const uint8_t *mac) {
     for (uint8_t c = 0; c < MAX_PENDING_MACS; c++) {
         if (memcmp(mac, ((uint8_t *) &(pendingDataArr[c].targetMac)), 8) == 0) {
             if (pendingDataArr[c].attemptsLeft != 0) {
@@ -134,7 +159,7 @@ int8_t findSlotForMac(const uint8_t *mac) {
     }
     return -1;
 }
-int8_t findFreeSlot() {
+int32_t findFreeSlot() {
     for (uint8_t c = 0; c < MAX_PENDING_MACS; c++) {
         if (pendingDataArr[c].attemptsLeft == 0) {
             return c;
@@ -142,7 +167,7 @@ int8_t findFreeSlot() {
     }
     return -1;
 }
-int8_t findSlotForVer(const uint8_t *ver) {
+int32_t findSlotForVer(const uint8_t *ver) {
     for (uint8_t c = 0; c < MAX_PENDING_MACS; c++) {
         if (memcmp(ver, ((uint8_t *) &(pendingDataArr[c].availdatainfo.dataVer)), 8) == 0) {
             if (pendingDataArr[c].attemptsLeft != 0) return c;
@@ -151,14 +176,14 @@ int8_t findSlotForVer(const uint8_t *ver) {
     return -1;
 }
 void deleteAllPendingDataForVer(const uint8_t *ver) {
-    int8_t slot = -1;
+    int32_t slot = -1;
     do {
         slot = findSlotForVer(ver);
         if (slot != -1) pendingDataArr[slot].attemptsLeft = 0;
     } while (slot != -1);
 }
 void deleteAllPendingDataForMac(const uint8_t *mac) {
-    int8_t slot = -1;
+    int32_t slot = -1;
     do {
         slot = findSlotForMac(mac);
         if (slot != -1) pendingDataArr[slot].attemptsLeft = 0;
@@ -289,7 +314,7 @@ void     processSerial(uint8_t lastchar) {
             if (bytesRemain == 0) {
                 if (checkCRC(serialbuffer, sizeof(struct pendingData))) {
                     struct pendingData *pd   = (struct pendingData *) serialbuffer;
-                    int8_t              slot = findSlotForMac(pd->targetMac);
+                    int32_t              slot = findSlotForMac(pd->targetMac);
                     if (slot == -1) slot = findFreeSlot();
                     if (slot != -1) {
                         memcpy(&(pendingDataArr[slot]), serialbuffer, sizeof(struct pendingData));
@@ -599,7 +624,7 @@ void processXferComplete(uint8_t *buffer) {
     if (memcmp(lastAckMac, rxHeader->src, 8) != 0) {
         memcpy((void *) lastAckMac, (void *) rxHeader->src, 8);
         espNotifyXferComplete(rxHeader->src);
-        int8_t slot = findSlotForMac(rxHeader->src);
+        int32_t slot = findSlotForMac(rxHeader->src);
         if (slot != -1) pendingDataArr[slot].attemptsLeft = 0;
     }
 }
@@ -763,11 +788,27 @@ void app_main(void) {
     housekeepingTimer = getMillis();
     while (1) {
         while ((getMillis() - housekeepingTimer) < ((1000 * HOUSEKEEPING_INTERVAL) - 100)) {
-            int8_t ret = commsRxUnencrypted(radiorxbuffer);
+            int32_t ret = commsRxUnencrypted(radiorxbuffer);
             if (ret > 1) {
                 led_flash(0);
+
+                uint8_t PktType = getPacketType(radiorxbuffer);
+#if CONFIG_OEPL_VERBOSE_DEBUG
+                LOGV_RAW("Received %d byte ",ret);
+                for(uint8_t i = 0; gPktTypeLookupTbl[i].Name != NULL; i++) {
+                   if(gPktTypeLookupTbl[i].Type == PktType) {
+                      LOGV_RAW("%s",gPktTypeLookupTbl[i].Name);
+                      break;
+                   }
+                   if(gPktTypeLookupTbl[i].Name == NULL) {
+                      LOGV_RAW("undefined (0x%02x)",PktType);
+                   }
+                }
+                LOGV_RAW(" packet:\n");
+                LOGV_HEX(radiorxbuffer,ret);
+#endif
                 // received a packet, lets see what it is
-                switch (getPacketType(radiorxbuffer)) {
+                switch (PktType) {
                     case PKT_AVAIL_DATA_REQ:
                         if (ret == 28) {
                             // old version of the AvailDataReq struct, set all the new fields to zero, so it will pass the CRC

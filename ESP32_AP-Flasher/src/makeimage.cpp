@@ -365,9 +365,23 @@ uint8_t *g5Compress(uint16_t width, uint16_t height, uint8_t *buffer, uint16_t b
 }
 #endif
 
+void doTimestamp(TFT_eSprite *spr) {
+    time_t now = time(nullptr);
+    struct tm *timeinfo = localtime(&now);
+    char buffer[20];
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M", timeinfo);
+
+    // spr->drawRect(spr->width() - 16 * 6 - 4, spr->height() - 10 - 2, 16 * 6 + 3, 11, TFT_BLACK);
+    spr->drawRect(spr->width() - 16 * 6 - 3, spr->height() - 10 - 1, 16 * 6 + 1, 9, TFT_WHITE);
+    spr->setTextColor(TFT_BLACK, TFT_WHITE);
+    spr->setCursor(spr->width() - 16 * 6 - 2, spr->height() - 10, 1);
+    spr->print(buffer);
+}
+
 void spr2buffer(TFT_eSprite &spr, String &fileout, imgParam &imageParams) {
     long t = millis();
 
+    if (config.showtimestamp) doTimestamp(&spr);
 #ifdef HAS_TFT
     extern uint8_t YellowSense;
     if (fileout == "direct") {
@@ -386,7 +400,7 @@ void spr2buffer(TFT_eSprite &spr, String &fileout, imgParam &imageParams) {
             size_t dataSize = spr.width() * spr.height() * (spr.getColorDepth() / 8);
             memcpy(spriteData2, spriteData, dataSize);
 
-#ifdef HAS_LILYGO_TPANEL
+#if defined HAS_LILYGO_TPANEL || defined HAS_4inch_TPANEL
             if (spr.getColorDepth() == 16) {
                 long dy = spr.height();
                 long dx = spr.width();

@@ -7,6 +7,7 @@
 #include <MD5Builder.h>
 #include <Update.h>
 
+#include "flasher.h"
 #include "espflasher.h"
 #include "leds.h"
 #include "serialap.h"
@@ -14,6 +15,7 @@
 #include "tag_db.h"
 #include "util.h"
 #include "web.h"
+
 
 #ifndef BUILD_ENV_NAME
 #define BUILD_ENV_NAME unknown
@@ -30,9 +32,11 @@
 
 #define STR_IMPL(x) #x
 #define STR(x) STR_IMPL(x)
+#define LOG(format, ... ) Serial.printf(format,## __VA_ARGS__)
+
 
 void handleSysinfoRequest(AsyncWebServerRequest* request) {
-    StaticJsonDocument<250> doc;
+    JsonDocument doc;
     doc["alias"] = config.alias;
     doc["env"] = STR(BUILD_ENV_NAME);
     doc["buildtime"] = STR(BUILD_TIME);
@@ -41,12 +45,20 @@ void handleSysinfoRequest(AsyncWebServerRequest* request) {
     doc["psramsize"] = ESP.getPsramSize();
     doc["flashsize"] = ESP.getFlashChipSize();
     doc["rollback"] = Update.canRollBack();
-#if defined C6_OTA_FLASHING
-    doc["hasC6"] = 1;
-    doc["C6version"] = apInfo.version;
-#else
+    doc["ap_version"] = apInfo.version;
+
     doc["hasC6"] = 0;
+    doc["hasH2"] = 0;
+    doc["hasTslr"] = 0;
+
+#if defined HAS_H2
+    doc["hasH2"] = 1;
+#elif defined HAS_TSLR
+    doc["hasTslr"] = 1;
+#elif defined C6_OTA_FLASHING
+    doc["hasC6"] = 1;
 #endif
+
 #ifdef HAS_EXT_FLASHER
     doc["hasFlasher"] = 1;
 #else
@@ -67,7 +79,7 @@ void handleCheckFile(AsyncWebServerRequest* request) {
     const String filePath = request->getParam("path")->value();
     File file = contentFS->open(filePath, "r");
     if (!file) {
-        StaticJsonDocument<64> doc;
+        JsonDocument doc;
         doc["filesize"] = 0;
         doc["md5"] = "";
         String jsonResponse;
@@ -86,7 +98,7 @@ void handleCheckFile(AsyncWebServerRequest* request) {
 
     file.close();
 
-    StaticJsonDocument<128> doc;
+    JsonDocument doc;
     doc["filesize"] = fileSize;
     doc["md5"] = md5Hash;
     String jsonResponse;
@@ -136,12 +148,13 @@ void handleLittleFSUpload(AsyncWebServerRequest* request, String filename, size_
                     file.write(uploadInfo->buffer, uploadInfo->bufferSize);
                     file.close();
                     uploadInfo->bufferSize = 0;
+                    xSemaphoreGive(fsMutex);
                 } else {
+                    xSemaphoreGive(fsMutex);
                     logLine("Failed to open file for appending: " + uploadfilename);
                     final = true;
                     error = true;
                 }
-                xSemaphoreGive(fsMutex);
 
                 memcpy(uploadInfo->buffer, data, len);
                 uploadInfo->bufferSize = len;
@@ -154,11 +167,12 @@ void handleLittleFSUpload(AsyncWebServerRequest* request, String filename, size_
                 if (file) {
                     file.write(uploadInfo->buffer, uploadInfo->bufferSize);
                     file.close();
+                    xSemaphoreGive(fsMutex);
                 } else {
+                    xSemaphoreGive(fsMutex);
                     logLine("Failed to open file for appending: " + uploadfilename);
                     error = true;
                 }
-                xSemaphoreGive(fsMutex);
                 request->_tempObject = nullptr;
                 delete uploadInfo;
             }
@@ -290,22 +304,29 @@ void handleRollback(AsyncWebServerRequest* request) {
     }
 }
 
+#ifdef C6_OTA_FLASHING
 void C6firmwareUpdateTask(void* parameter) {
-    uint8_t doDownload = *((uint8_t*)parameter);
+    char* urlPtr = reinterpret_cast<char*>(parameter);
+
+    LOG("C6firmwareUpdateTask: url '%s'\n", urlPtr);
     wsSerial("Stopping AP service");
 
-    setAPstate(false, AP_STATE_FLASHING);
+    gSerialTaskState = SERIAL_STATE_STOP;
     config.runStatus = RUNSTATUS_STOP;
+    setAPstate(false, AP_STATE_FLASHING);
+#ifndef FLASHER_DEBUG_SHARED
     extern bool rxSerialStopTask2;
     rxSerialStopTask2 = true;
+#endif
     vTaskDelay(500 / portTICK_PERIOD_MS);
     Serial1.end();
+    setAPstate(false, AP_STATE_FLASHING);
 
-    wsSerial("C6 flash starting");
+    wsSerial(SHORT_CHIP_NAME " flash starting");
 
-    bool result = doC6flash(doDownload);
+    bool result = FlashC6_H2(urlPtr);
 
-    wsSerial("C6 flash end");
+    wsSerial(SHORT_CHIP_NAME " flash end");
 
     if (result) {
         setAPstate(false, AP_STATE_OFFLINE);
@@ -315,36 +336,65 @@ void C6firmwareUpdateTask(void* parameter) {
 
         wsSerial("starting monitor");
         Serial1.begin(115200, SERIAL_8N1, FLASHER_AP_RXD, FLASHER_AP_TXD);
+#ifndef FLASHER_DEBUG_SHARED
         rxSerialStopTask2 = false;
-#ifdef FLASHER_DEBUG_RXD
-        xTaskCreate(rxSerialTask2, "rxSerialTask2", 1750, NULL, 2, NULL);
+        xTaskCreate(rxSerialTask2, "rxSerialTask2", 1850, NULL, 2, NULL);
 #endif
         vTaskDelay(1000 / portTICK_PERIOD_MS);
 
-        wsSerial("resetting AP");
-        APTagReset();
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-
+        apInfo.version = 0;
         wsSerial("bringing AP online");
-        if (bringAPOnline()) config.runStatus = RUNSTATUS_RUN;
+        // if (bringAPOnline(AP_STATE_REQUIRED_POWER_CYCLE)) config.runStatus = RUNSTATUS_STOP;
+        if (bringAPOnline(AP_STATE_ONLINE)) {
+            config.runStatus = RUNSTATUS_RUN;
+            setAPstate(true, AP_STATE_ONLINE);
+        }
 
-        wsSerial("Finished!");
-    } else {
-        wsSerial("Flashing failed. :-(");
+        // Wait for version info to arrive
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+        if(apInfo.version == 0) {
+           result = false;
+        }
     }
+
+    if (result) {
+       wsSerial("Finished!");
+       char buffer[50];
+       snprintf(buffer,sizeof(buffer),
+                "ESP32-" SHORT_CHIP_NAME " version is now %04x", apInfo.version);
+       wsSerial(String(buffer));
+    }
+    else if(apInfo.version == 0) {
+       wsSerial("AP failed to come online. :-(");
+    }
+    else {
+       wsSerial("Flashing failed. :-(");
+    }
+    // wsSerial("Reboot system now");
+    // wsSerial("[reboot]");
+    free(urlPtr);
+    vTaskDelay(30000 / portTICK_PERIOD_MS);
     vTaskDelete(NULL);
 }
+#endif
+
 
 void handleUpdateC6(AsyncWebServerRequest* request) {
 #if defined C6_OTA_FLASHING
-    uint8_t doDownload = 1;
-    if (request->hasParam("download", true)) {
-        doDownload = atoi(request->getParam("download", true)->value().c_str());
+    if (request->hasParam("url",true)) {
+        const char* urlStr = request->getParam("url", true)->value().c_str();
+        char* urlCopy = strdup(urlStr);
+        xTaskCreate(C6firmwareUpdateTask, "OTAUpdateTask", 6400, urlCopy, 10, NULL);
+        request->send(200, "Ok");
     }
-    xTaskCreate(C6firmwareUpdateTask, "OTAUpdateTask", 6144, &doDownload, 10, NULL);
-    request->send(200, "Ok");
+    else {
+       LOG("Sending bad request");
+       request->send(400, "Bad request");
+    }
+#elif defined(SHORT_CHIP_NAME)
+    request->send(400, SHORT_CHIP_NAME " flashing not implemented");
 #else
-    request->send(400, "C6 flashing not implemented");
+    request->send(400, "C6/H2 flashing not implemented");
 #endif
 }
 
@@ -356,7 +406,7 @@ void handleUpdateActions(AsyncWebServerRequest* request) {
         request->send(200, "No update actions needed");
         return;
     }
-    DynamicJsonDocument doc(1000);
+    JsonDocument doc;
     DeserializationError error = deserializeJson(doc, file);
     const JsonArray deleteFiles = doc["deletefile"].as<JsonArray>();
     for (const auto& filePath : deleteFiles) {

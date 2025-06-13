@@ -2,6 +2,9 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <time.h>
+#ifdef ETHERNET_CLK_MODE
+#include <ETH.h>
+#endif
 
 #include "contentmanager.h"
 #include "flasher.h"
@@ -48,7 +51,12 @@ void delayedStart(void* parameter) {
 }
 
 void setup() {
+#ifdef UART_LOGGING_TX_ONLY_PIN
+    Serial.begin(115200, SERIAL_8N1, -1, UART_LOGGING_TX_ONLY_PIN);
+    gpio_set_drive_capability((gpio_num_t)FLASHER_AP_RXD, GPIO_DRIVE_CAP_0);
+#else
     Serial.begin(115200);
+#endif
 #if ARDUINO_USB_CDC_ON_BOOT == 1
     Serial.setTxTimeoutMs(0); // workaround bug in USB CDC that slows down serial output when no usb connected
 #endif
@@ -114,6 +122,7 @@ void setup() {
     }
     */
 
+    wm.initEth();
     initAPconfig();
 
     updateLanguageFromConfig();
@@ -150,7 +159,12 @@ void setup() {
     // We'll need to start the 'usbflasher' task for boards with a second (USB) port. This can be used as a 'flasher' interface, using a python script on the host
     xTaskCreate(usbFlasherTask, "usbflasher", 10000, NULL, 5, NULL);
 #else
+
+#ifdef ETHERNET_CLK_MODE
+    if (!(ETHERNET_CLK_MODE == ETH_CLOCK_GPIO0_IN || ETHERNET_CLK_MODE == ETH_CLOCK_GPIO0_OUT))
+#endif
     pinMode(0, INPUT_PULLUP);
+
 #endif
 
 #ifdef HAS_EXT_FLASHER

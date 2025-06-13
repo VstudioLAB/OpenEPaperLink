@@ -10,6 +10,9 @@ std::unordered_map<size_t, TagData::Parser> TagData::parsers = {};
 void TagData::loadParsers(const String& filename) {
     const long start = millis();
 
+    if (!contentFS->exists(filename)) {
+        return;
+    }
     fs::File file = contentFS->open(filename, "r");
     if (!file) {
         return;
@@ -17,7 +20,7 @@ void TagData::loadParsers(const String& filename) {
     Serial.println("Reading parsers from file");
 
     if (file.find("[")) {
-        DynamicJsonDocument doc(1000);
+        JsonDocument doc;
         bool parsing = true;
         while (parsing) {
             DeserializationError err = deserializeJson(doc, file);
